@@ -1,0 +1,6 @@
+node_modules
+dist
+vibe_images
+src-tauri/target
+src-tauri/gen/schemas
+.DS_Store
