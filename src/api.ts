@@ -38,6 +38,25 @@ export interface UpdateInfo {
   note: string | null;
 }
 
+export interface SkillLocation {
+  root: string;
+  path: string;
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  version: string | null;
+  path: string;
+  realPath: string;
+  locations: SkillLocation[];
+  source: string | null;
+  sourceUrl: string | null;
+  installedAt: string | null;
+  updatedAt: string | null;
+  managed: boolean;
+}
+
 export const api = {
   scanApps: () => invoke<AppInfo[]>("scan_apps"),
   appSizes: (paths: string[]) =>
@@ -55,4 +74,6 @@ export const api = {
     invoke<UpdateInfo[]>("check_updates", { apps }),
   performUpdate: (appPath: string, channel: UpdateChannel, target: string) =>
     invoke<string>("perform_update", { appPath, channel, target }),
+  scanSkills: () => invoke<SkillInfo[]>("scan_skills"),
+  updateSkill: (name: string) => invoke<string>("update_skill", { name }),
 };

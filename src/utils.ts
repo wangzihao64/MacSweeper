@@ -16,3 +16,12 @@ export function formatBytes(bytes: number | null | undefined): string {
 export function tildify(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~");
 }
+
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}

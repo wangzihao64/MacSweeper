@@ -3,13 +3,16 @@ import {
   api,
   type AppInfo,
   type LeftoverItem,
+  type SkillInfo,
   type UninstallReport,
   type UpdateInfo,
 } from "./api";
 import { formatBytes } from "./utils";
-import Sidebar, { type Filter } from "./components/Sidebar";
+import Sidebar, { type Filter, type View } from "./components/Sidebar";
 import AppRow from "./components/AppRow";
 import DetailPanel from "./components/DetailPanel";
+import SkillRow from "./components/SkillRow";
+import SkillPanel from "./components/SkillPanel";
 import {
   ConfirmDialog,
   ErrorDialog,
@@ -41,9 +44,16 @@ export default function App() {
   const [updates, setUpdates] = useState<Record<string, UpdateInfo>>({});
   const [updatesChecking, setUpdatesChecking] = useState(false);
   const [updatingPath, setUpdatingPath] = useState<string | null>(null);
+  const [view, setView] = useState<View>("apps");
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(true);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
+  const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const scanSeq = useRef(0);
+  const skillSeq = useRef(0);
   const leftoverSeq = useRef(0);
   const updateSeq = useRef(0);
   const booted = useRef(false);
@@ -95,6 +105,25 @@ export default function App() {
     await Promise.all(Array.from({ length: 4 }, worker));
   }, []);
 
+  const loadSkills = useCallback(async () => {
+    const seq = ++skillSeq.current;
+    setSkillsLoading(true);
+    setSkillsError(null);
+    try {
+      const list = await api.scanSkills();
+      if (seq !== skillSeq.current) return;
+      setSkills(list);
+      setSelectedSkill((prev) =>
+        prev ? list.find((s) => s.name === prev.name) ?? null : null,
+      );
+    } catch (err) {
+      if (seq !== skillSeq.current) return;
+      setSkillsError(String(err));
+    } finally {
+      if (seq === skillSeq.current) setSkillsLoading(false);
+    }
+  }, []);
+
   const scan = useCallback(async () => {
     const seq = ++scanSeq.current;
     setLoading(true);
@@ -122,7 +151,28 @@ export default function App() {
     if (booted.current) return;
     booted.current = true;
     void scan();
-  }, [scan]);
+    void loadSkills();
+  }, [scan, loadSkills]);
+
+  const changeView = useCallback(
+    (next: View) => {
+      if (next === view) return;
+      setView(next);
+      setQuery("");
+      setSelected(null);
+      setLeftovers(null);
+      setSelectedSkill(null);
+    },
+    [view],
+  );
+
+  const rescan = useCallback(() => {
+    if (view === "skills") {
+      void loadSkills();
+    } else {
+      void scan();
+    }
+  }, [view, loadSkills, scan]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -133,10 +183,12 @@ export default function App() {
         searchRef.current?.select();
       } else if (mod && e.key.toLowerCase() === "r") {
         e.preventDefault();
-        if (!busy) void scan();
+        if (!busy) rescan();
       } else if (e.key === "Escape") {
         if (dialog) {
           if (!busy) setDialog(null);
+        } else if (selectedSkill) {
+          setSelectedSkill(null);
         } else if (selected) {
           setSelected(null);
           setLeftovers(null);
@@ -145,7 +197,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [scan, dialog, busy, selected]);
+  }, [rescan, dialog, busy, selected, selectedSkill]);
 
   const selectApp = useCallback(async (app: AppInfo) => {
     setSelected(app);
@@ -225,6 +277,22 @@ export default function App() {
   );
   const sizesReady = apps.length > 0 && Object.keys(sizes).length >= apps.length;
 
+  const visibleSkills = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return skills;
+    return skills.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q) ||
+        (s.source ?? "").toLowerCase().includes(q),
+    );
+  }, [skills, query]);
+
+  const managedSkillCount = useMemo(
+    () => skills.filter((s) => s.managed).length,
+    [skills],
+  );
+
   const closeDialog = () => {
     if (busy) return;
     setDialog(null);
@@ -272,15 +340,32 @@ export default function App() {
     }
   };
 
+  const handleSkillUpdate = async (skill: SkillInfo) => {
+    if (updatingSkill) return;
+    setUpdatingSkill(skill.name);
+    try {
+      const message = await api.updateSkill(skill.name);
+      setDialog({ kind: "notice", title: "Skill 更新", message });
+      await loadSkills();
+    } catch (err) {
+      setDialog({ kind: "error", message: String(err) });
+    } finally {
+      setUpdatingSkill(null);
+    }
+  };
+
   return (
     <div className="app">
       <Sidebar
+        view={view}
+        onView={changeView}
         filter={filter}
         onFilter={setFilter}
         counts={counts}
         updateCount={updateCount}
-        scanning={loading}
-        onRescan={() => void scan()}
+        skillCount={skills.length}
+        scanning={view === "skills" ? skillsLoading : loading}
+        onRescan={rescan}
       />
 
       <main className="main">
@@ -301,7 +386,11 @@ export default function App() {
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索 App 名称或 Bundle ID"
+              placeholder={
+                view === "skills"
+                  ? "搜索 Skill 名称、描述或来源"
+                  : "搜索 App 名称或 Bundle ID"
+              }
               spellCheck={false}
               autoComplete="off"
             />
@@ -312,80 +401,136 @@ export default function App() {
             )}
           </div>
           <div className="toolbar-meta">
-            {loading
-              ? "正在扫描…"
-              : `${visibleApps.length} 个 App · ${
-                  sizesReady ? `共 ${formatBytes(totalBytes)}` : "计算大小中…"
-                }${
-                  updatesChecking
-                    ? " · 正在检查更新…"
-                    : updateCount > 0
-                      ? ` · ${updateCount} 个可更新`
-                      : ""
-                }`}
+            {view === "skills"
+              ? skillsLoading
+                ? "正在扫描技能…"
+                : `${visibleSkills.length} 个 Skill · ${managedSkillCount} 个可自动更新`
+              : loading
+                ? "正在扫描…"
+                : `${visibleApps.length} 个 App · ${
+                    sizesReady ? `共 ${formatBytes(totalBytes)}` : "计算大小中…"
+                  }${
+                    updatesChecking
+                      ? " · 正在检查更新…"
+                      : updateCount > 0
+                        ? ` · ${updateCount} 个可更新`
+                        : ""
+                  }`}
           </div>
         </div>
 
-        <div className="progress" hidden={!loading}>
+        <div
+          className="progress"
+          hidden={view === "skills" ? !skillsLoading : !loading}
+        >
           <span />
         </div>
 
         <div className="list">
-          {loading && apps.length === 0 && <SkeletonRows />}
+          {view === "skills" ? (
+            <>
+              {skillsLoading && skills.length === 0 && <SkeletonRows />}
 
-          {!loading && scanError && (
-            <div className="state-block">
-              <p>扫描失败</p>
-              <span>{scanError}</span>
-              <button className="btn" onClick={() => void scan()}>
-                重试
-              </button>
-            </div>
-          )}
+              {!skillsLoading && skillsError && (
+                <div className="state-block">
+                  <p>扫描技能失败</p>
+                  <span>{skillsError}</span>
+                  <button className="btn" onClick={() => void loadSkills()}>
+                    重试
+                  </button>
+                </div>
+              )}
 
-          {!loading &&
-            !scanError &&
-            visibleApps.map((app) => (
-              <AppRow
-                key={app.path}
-                app={app}
-                icon={icons[app.path]}
-                size={sizes[app.path]}
-                update={updates[app.path]}
-                selected={selected?.path === app.path}
-                onSelect={() => void selectApp(app)}
-              />
-            ))}
+              {!skillsLoading &&
+                !skillsError &&
+                visibleSkills.map((skill) => (
+                  <SkillRow
+                    key={skill.name}
+                    skill={skill}
+                    selected={selectedSkill?.name === skill.name}
+                    onSelect={() => setSelectedSkill(skill)}
+                  />
+                ))}
 
-          {!loading && !scanError && visibleApps.length === 0 && (
-            <div className="state-block">
-              <p>没有找到匹配的 App</p>
-              <span>{query ? `换个关键词试试` : "当前筛选条件下为空"}</span>
-            </div>
+              {!skillsLoading && !skillsError && visibleSkills.length === 0 && (
+                <div className="state-block">
+                  <p>没有找到匹配的 Skill</p>
+                  <span>
+                    {query ? "换个关键词试试" : "常见目录：~/.agents、~/.claude、~/.codex、~/.qoder"}
+                  </span>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {loading && apps.length === 0 && <SkeletonRows />}
+
+              {!loading && scanError && (
+                <div className="state-block">
+                  <p>扫描失败</p>
+                  <span>{scanError}</span>
+                  <button className="btn" onClick={() => void scan()}>
+                    重试
+                  </button>
+                </div>
+              )}
+
+              {!loading &&
+                !scanError &&
+                visibleApps.map((app) => (
+                  <AppRow
+                    key={app.path}
+                    app={app}
+                    icon={icons[app.path]}
+                    size={sizes[app.path]}
+                    update={updates[app.path]}
+                    selected={selected?.path === app.path}
+                    onSelect={() => void selectApp(app)}
+                  />
+                ))}
+
+              {!loading && !scanError && visibleApps.length === 0 && (
+                <div className="state-block">
+                  <p>没有找到匹配的 App</p>
+                  <span>{query ? `换个关键词试试` : "当前筛选条件下为空"}</span>
+                </div>
+              )}
+            </>
           )}
         </div>
       </main>
 
-      <DetailPanel
-        app={selected}
-        icon={selected ? icons[selected.path] : undefined}
-        appSize={selected ? sizes[selected.path] : undefined}
-        leftovers={leftovers}
-        loading={leftoversLoading}
-        unchecked={unchecked}
-        onToggle={toggleLeftover}
-        onToggleAll={toggleAllLeftovers}
-        onUninstall={(mode) => {
-          setAcknowledged(false);
-          setDialog({ kind: "confirm", mode });
-        }}
-        update={selected ? updates[selected.path] : undefined}
-        updating={updatingPath === selected?.path}
-        onUpdate={() => {
-          if (selected) void handleUpdate(selected);
-        }}
-        onClose={closeDetail}
-      />
+      {view === "skills" ? (
+        <SkillPanel
+          skill={selectedSkill}
+          updating={updatingSkill === selectedSkill?.name}
+          onUpdate={() => {
+            if (selectedSkill) void handleSkillUpdate(selectedSkill);
+          }}
+          onClose={() => setSelectedSkill(null)}
+        />
+      ) : (
+        <DetailPanel
+          app={selected}
+          icon={selected ? icons[selected.path] : undefined}
+          appSize={selected ? sizes[selected.path] : undefined}
+          leftovers={leftovers}
+          loading={leftoversLoading}
+          unchecked={unchecked}
+          onToggle={toggleLeftover}
+          onToggleAll={toggleAllLeftovers}
+          onUninstall={(mode) => {
+            setAcknowledged(false);
+            setDialog({ kind: "confirm", mode });
+          }}
+          update={selected ? updates[selected.path] : undefined}
+          updating={updatingPath === selected?.path}
+          onUpdate={() => {
+            if (selected) void handleUpdate(selected);
+          }}
+          onClose={closeDetail}
+        />
+      )}
 
       {dialog?.kind === "confirm" && selected && (
         <ConfirmDialog

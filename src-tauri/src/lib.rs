@@ -1,6 +1,7 @@
 mod icons;
 mod leftovers;
 mod scanner;
+mod skills;
 mod uninstaller;
 mod updates;
 mod util;
@@ -15,6 +16,8 @@ pub fn run() {
             uninstaller::uninstall,
             updates::check_updates,
             updates::perform_update,
+            skills::scan_skills,
+            skills::update_skill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MacSweeper");
