@@ -4,16 +4,23 @@ import {
   type AppInfo,
   type LeftoverItem,
   type UninstallReport,
+  type UpdateInfo,
 } from "./api";
 import { formatBytes } from "./utils";
 import Sidebar, { type Filter } from "./components/Sidebar";
 import AppRow from "./components/AppRow";
 import DetailPanel from "./components/DetailPanel";
-import { ConfirmDialog, ErrorDialog, ReportDialog } from "./components/Dialogs";
+import {
+  ConfirmDialog,
+  ErrorDialog,
+  NoticeDialog,
+  ReportDialog,
+} from "./components/Dialogs";
 
 type Dialog =
   | { kind: "confirm"; mode: "trash" | "delete" }
   | { kind: "report"; report: UninstallReport; appName: string }
+  | { kind: "notice"; title: string; message: string }
   | { kind: "error"; message: string };
 
 export default function App() {
@@ -31,11 +38,33 @@ export default function App() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  const [updates, setUpdates] = useState<Record<string, UpdateInfo>>({});
+  const [updatesChecking, setUpdatesChecking] = useState(false);
+  const [updatingPath, setUpdatingPath] = useState<string | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const scanSeq = useRef(0);
   const leftoverSeq = useRef(0);
+  const updateSeq = useRef(0);
   const booted = useRef(false);
+
+  const checkUpdatesFor = useCallback(async (list: AppInfo[]) => {
+    const seq = ++updateSeq.current;
+    setUpdatesChecking(true);
+    try {
+      const infos = await api.checkUpdates(
+        list.map((a) => ({ path: a.path, bundleId: a.bundleId, version: a.version })),
+      );
+      if (seq !== updateSeq.current) return;
+      const map: Record<string, UpdateInfo> = {};
+      for (const info of infos) map[info.path] = info;
+      setUpdates(map);
+    } catch {
+      // 网络或更新渠道不可用时忽略，不影响本体功能
+    } finally {
+      if (seq === updateSeq.current) setUpdatesChecking(false);
+    }
+  }, []);
 
   const hydrate = useCallback(async (list: AppInfo[], seq: number) => {
     api
@@ -81,12 +110,13 @@ export default function App() {
       setIcons({});
       setLoading(false);
       void hydrate(list, seq);
+      void checkUpdatesFor(list);
     } catch (err) {
       if (seq !== scanSeq.current) return;
       setScanError(String(err));
       setLoading(false);
     }
-  }, [hydrate]);
+  }, [hydrate, checkUpdatesFor]);
 
   useEffect(() => {
     if (booted.current) return;
@@ -169,9 +199,15 @@ export default function App() {
     [apps],
   );
 
+  const updateCount = useMemo(
+    () => Object.values(updates).filter((u) => u.updateAvailable).length,
+    [updates],
+  );
+
   const visibleApps = useMemo(() => {
     const q = query.trim().toLowerCase();
     return apps.filter((app) => {
+      if (filter === "update" && !updates[app.path]?.updateAvailable) return false;
       if (filter === "user" && app.isSystem) return false;
       if (filter === "system" && !app.isSystem) return false;
       if (!q) return true;
@@ -181,7 +217,7 @@ export default function App() {
         app.path.toLowerCase().includes(q)
       );
     });
-  }, [apps, filter, query]);
+  }, [apps, filter, query, updates]);
 
   const totalBytes = useMemo(
     () => Object.values(sizes).reduce((sum, v) => sum + v, 0),
@@ -217,12 +253,32 @@ export default function App() {
     }
   };
 
+  const handleUpdate = async (app: AppInfo) => {
+    const info = updates[app.path];
+    if (!info || updatingPath) return;
+    setUpdatingPath(app.path);
+    try {
+      const message = await api.performUpdate(app.path, info.channel, info.target);
+      setDialog({
+        kind: "notice",
+        title: info.channel === "homebrew" ? "Homebrew 升级" : "更新",
+        message,
+      });
+      if (info.channel === "homebrew") void scan();
+    } catch (err) {
+      setDialog({ kind: "error", message: String(err) });
+    } finally {
+      setUpdatingPath(null);
+    }
+  };
+
   return (
     <div className="app">
       <Sidebar
         filter={filter}
         onFilter={setFilter}
         counts={counts}
+        updateCount={updateCount}
         scanning={loading}
         onRescan={() => void scan()}
       />
@@ -260,6 +316,12 @@ export default function App() {
               ? "正在扫描…"
               : `${visibleApps.length} 个 App · ${
                   sizesReady ? `共 ${formatBytes(totalBytes)}` : "计算大小中…"
+                }${
+                  updatesChecking
+                    ? " · 正在检查更新…"
+                    : updateCount > 0
+                      ? ` · ${updateCount} 个可更新`
+                      : ""
                 }`}
           </div>
         </div>
@@ -289,6 +351,7 @@ export default function App() {
                 app={app}
                 icon={icons[app.path]}
                 size={sizes[app.path]}
+                update={updates[app.path]}
                 selected={selected?.path === app.path}
                 onSelect={() => void selectApp(app)}
               />
@@ -316,6 +379,11 @@ export default function App() {
           setAcknowledged(false);
           setDialog({ kind: "confirm", mode });
         }}
+        update={selected ? updates[selected.path] : undefined}
+        updating={updatingPath === selected?.path}
+        onUpdate={() => {
+          if (selected) void handleUpdate(selected);
+        }}
         onClose={closeDetail}
       />
 
@@ -337,6 +405,14 @@ export default function App() {
         <ReportDialog
           report={dialog.report}
           appName={dialog.appName}
+          onClose={closeDialog}
+        />
+      )}
+
+      {dialog?.kind === "notice" && (
+        <NoticeDialog
+          title={dialog.title}
+          message={dialog.message}
           onClose={closeDialog}
         />
       )}

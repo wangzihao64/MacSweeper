@@ -2,6 +2,7 @@ mod icons;
 mod leftovers;
 mod scanner;
 mod uninstaller;
+mod updates;
 mod util;
 
 pub fn run() {
@@ -12,6 +13,8 @@ pub fn run() {
             icons::app_icon,
             leftovers::find_leftovers,
             uninstaller::uninstall,
+            updates::check_updates,
+            updates::perform_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MacSweeper");

@@ -143,6 +143,26 @@ export function ReportDialog({ report, appName, onClose }: ReportDialogProps) {
   );
 }
 
+interface NoticeDialogProps {
+  title: string;
+  message: string;
+  onClose: () => void;
+}
+
+export function NoticeDialog({ title, message, onClose }: NoticeDialogProps) {
+  return (
+    <Modal onClose={onClose}>
+      <h2>{title}</h2>
+      <p className="modal-lede notice-message">{message}</p>
+      <footer className="modal-actions">
+        <button className="btn btn-primary" onClick={onClose}>
+          完成
+        </button>
+      </footer>
+    </Modal>
+  );
+}
+
 interface ErrorDialogProps {
   message: string;
   onClose: () => void;

@@ -1,17 +1,19 @@
 import appIconUrl from "../assets/app-icon.png";
 
-export type Filter = "all" | "user" | "system";
+export type Filter = "all" | "update" | "user" | "system";
 
 interface SidebarProps {
   filter: Filter;
   onFilter: (filter: Filter) => void;
   counts: { all: number; user: number; system: number };
+  updateCount: number;
   scanning: boolean;
   onRescan: () => void;
 }
 
 const ITEMS: { key: Filter; label: string }[] = [
   { key: "all", label: "所有 App" },
+  { key: "update", label: "可更新" },
   { key: "user", label: "用户 App" },
   { key: "system", label: "系统 App" },
 ];
@@ -20,9 +22,12 @@ export default function Sidebar({
   filter,
   onFilter,
   counts,
+  updateCount,
   scanning,
   onRescan,
 }: SidebarProps) {
+  const countFor = (key: Filter) =>
+    key === "update" ? updateCount : counts[key];
   return (
     <aside className="sidebar">
       <div className="sidebar-drag" data-tauri-drag-region />
@@ -43,7 +48,9 @@ export default function Sidebar({
             onClick={() => onFilter(item.key)}
           >
             <span>{item.label}</span>
-            <span className="nav-count">{counts[item.key]}</span>
+            <span className={`nav-count ${item.key === "update" && updateCount > 0 ? "nav-count-hot" : ""}`}>
+              {countFor(item.key)}
+            </span>
           </button>
         ))}
       </nav>

@@ -1,7 +1,21 @@
 import { useMemo } from "react";
-import type { AppInfo, LeftoverItem } from "../api";
+import type { AppInfo, LeftoverItem, UpdateChannel, UpdateInfo } from "../api";
 import { formatBytes, tildify } from "../utils";
 import AppIcon from "./AppIcon";
+
+const CHANNEL_LABEL: Record<UpdateChannel, string> = {
+  appstore: "App Store",
+  homebrew: "Homebrew",
+  sparkle: "应用内更新",
+  self: "应用内更新",
+};
+
+const ACTION_LABEL: Record<UpdateChannel, string> = {
+  appstore: "打开 App Store",
+  homebrew: "一键升级",
+  sparkle: "启动应用更新",
+  self: "启动应用更新",
+};
 
 interface DetailPanelProps {
   app: AppInfo | null;
@@ -13,6 +27,9 @@ interface DetailPanelProps {
   onToggle: (path: string) => void;
   onToggleAll: (checked: boolean) => void;
   onUninstall: (mode: "trash" | "delete") => void;
+  update: UpdateInfo | undefined;
+  updating: boolean;
+  onUpdate: () => void;
   onClose: () => void;
 }
 
@@ -26,6 +43,9 @@ export default function DetailPanel({
   onToggle,
   onToggleAll,
   onUninstall,
+  update,
+  updating,
+  onUpdate,
   onClose,
 }: DetailPanelProps) {
   const groups = useMemo(() => {
@@ -91,6 +111,32 @@ export default function DetailPanel({
       </header>
 
       <div className="detail-scroll">
+        {update && (
+          <div className={`update-card ${update.updateAvailable ? "update-card-on" : ""}`}>
+            <div className="update-card-text">
+              <b>
+                {update.updateAvailable
+                  ? `发现新版本 ${update.latestVersion}`
+                  : "已是最新版本"}
+              </b>
+              <span>
+                当前版本 {app.version || update.installedVersion || "未知"} ·{" "}
+                {CHANNEL_LABEL[update.channel]}
+              </span>
+              {update.note && <em>{update.note}</em>}
+            </div>
+            {update.updateAvailable && (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={onUpdate}
+                disabled={updating}
+              >
+                {updating ? "处理中…" : ACTION_LABEL[update.channel]}
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="section-head">
           <span>关联文件</span>
           {!loading && (leftovers?.length ?? 0) > 0 && (

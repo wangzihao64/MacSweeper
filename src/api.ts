@@ -26,6 +26,18 @@ export interface UninstallReport {
   quitAttempted: boolean;
 }
 
+export type UpdateChannel = "appstore" | "homebrew" | "sparkle" | "self";
+
+export interface UpdateInfo {
+  path: string;
+  channel: UpdateChannel;
+  latestVersion: string | null;
+  installedVersion: string | null;
+  updateAvailable: boolean;
+  target: string;
+  note: string | null;
+}
+
 export const api = {
   scanApps: () => invoke<AppInfo[]>("scan_apps"),
   appSizes: (paths: string[]) =>
@@ -39,4 +51,8 @@ export const api = {
     extraPaths: string[];
     mode: "trash" | "delete";
   }) => invoke<UninstallReport>("uninstall", args),
+  checkUpdates: (apps: { path: string; bundleId: string; version: string }[]) =>
+    invoke<UpdateInfo[]>("check_updates", { apps }),
+  performUpdate: (appPath: string, channel: UpdateChannel, target: string) =>
+    invoke<string>("perform_update", { appPath, channel, target }),
 };
