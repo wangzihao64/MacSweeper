@@ -8,7 +8,9 @@ interface AppRowProps {
   size: number | undefined;
   update: UpdateInfo | undefined;
   selected: boolean;
+  checked: boolean;
   onSelect: () => void;
+  onToggle: () => void;
 }
 
 export default function AppRow({
@@ -17,14 +19,31 @@ export default function AppRow({
   size,
   update,
   selected,
+  checked,
   onSelect,
+  onToggle,
 }: AppRowProps) {
   return (
-    <button
+    <div
       className={`row ${selected ? "selected" : ""}`}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onSelect();
+      }}
+      role="button"
+      tabIndex={0}
       title={app.path}
     >
+      <input
+        type="checkbox"
+        className="row-check"
+        checked={checked}
+        disabled={app.isSystem}
+        aria-label={`选择 ${app.name}`}
+        title={app.isSystem ? "系统 App 无法卸载" : "选中以批量卸载"}
+        onClick={(e) => e.stopPropagation()}
+        onChange={onToggle}
+      />
       <AppIcon name={app.name} icon={icon} size={38} />
       <span className="row-main">
         <span className="row-name">
@@ -39,6 +58,6 @@ export default function AppRow({
       <span className={`row-size ${size == null ? "row-size-pending" : ""}`}>
         {size == null ? "计算中…" : formatBytes(size)}
       </span>
-    </button>
+    </div>
   );
 }

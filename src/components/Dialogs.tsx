@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { UninstallReport } from "../api";
+import type { AppInfo, BatchResult, UninstallReport } from "../api";
 import { formatBytes, tildify } from "../utils";
 
 interface ModalProps {
@@ -107,9 +107,7 @@ interface ReportDialogProps {
   report: UninstallReport;
   appName: string;
   onClose: () => void;
-}
-
-export function ReportDialog({ report, appName, onClose }: ReportDialogProps) {
+}export function ReportDialog({ report, appName, onClose }: ReportDialogProps) {
   const hasFailures = report.failed.length > 0;
   const anyRemoved = report.removed.length > 0;
   return (
@@ -176,6 +174,146 @@ export function ErrorDialog({ message, onClose }: ErrorDialogProps) {
       <footer className="modal-actions">
         <button className="btn btn-primary" onClick={onClose}>
           知道了
+        </button>
+      </footer>
+    </Modal>
+  );
+}
+
+interface BatchConfirmDialogProps {
+  mode: "trash" | "delete";
+  apps: AppInfo[];
+  leftoverCount: number | null;
+  totalBytes: number | null;
+  busy: boolean;
+  acknowledged: boolean;
+  onAcknowledged: (value: boolean) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+export function BatchConfirmDialog({
+  mode,
+  apps,
+  leftoverCount,
+  totalBytes,
+  busy,
+  acknowledged,
+  onAcknowledged,
+  onCancel,
+  onConfirm,
+}: BatchConfirmDialogProps) {
+  const permanent = mode === "delete";
+  const ready = leftoverCount != null;
+  return (
+    <Modal onClose={onCancel} dismissable={!busy}>
+      <h2>{permanent ? "永久删除这些 App？" : "把这些 App 移到废纸篓？"}</h2>
+      <p className="modal-lede">
+        将卸载 <b>{apps.length}</b> 个 App
+        {!ready
+          ? "，正在统计关联文件…"
+          : leftoverCount > 0
+            ? `，并清理 ${leftoverCount} 项关联文件。`
+            : "，未发现关联文件。"}
+      </p>
+      <div className="batch-apps">
+        {apps.map((app) => (
+          <div className="batch-app" key={app.path}>
+            <span className="batch-app-name" title={app.path}>
+              {app.name}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="summary-row">
+        <span>预计释放空间</span>
+        <b>{totalBytes == null ? "计算中…" : formatBytes(totalBytes)}</b>
+      </div>
+      {permanent ? (
+        <>
+          <div className="danger-box">
+            永久删除不会经过废纸篓，这些 App 与关联文件将无法恢复。
+          </div>
+          <label className="ack">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              onChange={(e) => onAcknowledged(e.target.checked)}
+              disabled={busy}
+            />
+            我已知晓此操作无法恢复
+          </label>
+        </>
+      ) : (
+        <p className="muted">这些项目会进入废纸篓，随时可以恢复。</p>
+      )}
+      <footer className="modal-actions">
+        <button className="btn" onClick={onCancel} disabled={busy}>
+          取消
+        </button>
+        <button
+          className={`btn ${permanent ? "btn-danger-solid" : "btn-primary"}`}
+          onClick={onConfirm}
+          disabled={busy || !ready || (permanent && !acknowledged)}
+        >
+          {busy ? (
+            <span className="btn-busy">
+              <span className="spinner" />
+              正在删除…
+            </span>
+          ) : permanent ? (
+            "永久删除"
+          ) : (
+            "移到废纸篓"
+          )}
+        </button>
+      </footer>
+    </Modal>
+  );
+}
+
+interface BatchReportDialogProps {
+  results: BatchResult[];
+  onClose: () => void;
+}
+
+export function BatchReportDialog({ results, onClose }: BatchReportDialogProps) {
+  const okCount = results.filter((r) => r.report).length;
+  const errCount = results.filter((r) => r.error).length;
+  const fileFails = results.flatMap(
+    (r) => r.report?.failed.map((f) => ({ app: r.appName, ...f })) ?? [],
+  );
+  return (
+    <Modal onClose={onClose}>
+      <h2>{errCount === 0 ? "批量卸载完成" : "批量卸载结果"}</h2>
+      <p className="modal-lede">
+        成功卸载 <b>{okCount}</b> 个 App
+        {errCount > 0 ? `，${errCount} 个失败` : ""}
+        {fileFails.length > 0 ? `；${fileFails.length} 项文件未能删除。` : "。"}
+      </p>
+      {(errCount > 0 || fileFails.length > 0) && (
+        <div className="fail-list">
+          {results
+            .filter((r) => r.error)
+            .map((r) => (
+              <div className="fail-item" key={r.appPath}>
+                <span className="fail-path">{r.appName}</span>
+                <span className="fail-error">{r.error}</span>
+              </div>
+            ))}
+          {fileFails.map((f, i) => (
+            <div className="fail-item" key={`${f.app}-${f.path}-${i}`}>
+              <span className="fail-path">
+                {f.app} · {tildify(f.path)}
+              </span>
+              <span className="fail-error">{f.error}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <footer className="modal-actions">
+        <button className="btn btn-primary" onClick={onClose}>
+          完成
         </button>
       </footer>
     </Modal>

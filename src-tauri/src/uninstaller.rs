@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -30,6 +30,66 @@ pub async fn uninstall(
     })
     .await
     .map_err(|e| format!("卸载任务异常：{e}"))?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchTarget {
+    pub app_path: String,
+    pub bundle_id: String,
+    #[serde(default)]
+    pub extra_paths: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchResult {
+    pub app_path: String,
+    pub app_name: String,
+    pub report: Option<UninstallReport>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn uninstall_many(
+    targets: Vec<BatchTarget>,
+    mode: String,
+) -> Result<Vec<BatchResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || batch_impl(targets, mode))
+        .await
+        .map_err(|e| format!("批量卸载任务异常：{e}"))
+}
+
+fn batch_impl(targets: Vec<BatchTarget>, mode: String) -> Vec<BatchResult> {
+    targets
+        .into_iter()
+        .map(|target| {
+            let app_name = Path::new(&target.app_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&target.app_path)
+                .to_string();
+            match uninstall_impl(
+                target.app_path.clone(),
+                target.bundle_id,
+                target.extra_paths,
+                mode.clone(),
+            ) {
+                Ok(report) => BatchResult {
+                    app_path: target.app_path,
+                    app_name,
+                    report: Some(report),
+                    error: None,
+                },
+                Err(error) => BatchResult {
+                    app_path: target.app_path,
+                    app_name,
+                    report: None,
+                    error: Some(error),
+                },
+            }
+        })
+        .collect()
 }
 
 fn uninstall_impl(
@@ -295,6 +355,22 @@ mod tests {
             "trash".to_string(),
         );
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn batch_reports_error_per_app() {
+        let results = batch_impl(
+            vec![BatchTarget {
+                app_path: "/tmp/macsweeper-missing.app".to_string(),
+                bundle_id: String::new(),
+                extra_paths: Vec::new(),
+            }],
+            "delete".to_string(),
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].app_name, "macsweeper-missing");
+        assert!(results[0].report.is_none());
+        assert!(results[0].error.is_some());
     }
 
     #[test]

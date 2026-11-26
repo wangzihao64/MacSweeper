@@ -14,6 +14,7 @@ pub fn run() {
             icons::app_icon,
             leftovers::find_leftovers,
             uninstaller::uninstall,
+            uninstaller::uninstall_many,
             updates::check_updates,
             updates::perform_update,
             skills::scan_skills,

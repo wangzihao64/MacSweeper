@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type AppInfo,
+  type BatchResult,
+  type BatchTarget,
   type LeftoverItem,
   type SkillInfo,
   type UninstallReport,
@@ -14,6 +16,8 @@ import DetailPanel from "./components/DetailPanel";
 import SkillRow from "./components/SkillRow";
 import SkillPanel from "./components/SkillPanel";
 import {
+  BatchConfirmDialog,
+  BatchReportDialog,
   ConfirmDialog,
   ErrorDialog,
   NoticeDialog,
@@ -24,7 +28,17 @@ type Dialog =
   | { kind: "confirm"; mode: "trash" | "delete" }
   | { kind: "report"; report: UninstallReport; appName: string }
   | { kind: "notice"; title: string; message: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | {
+      kind: "batch-confirm";
+      mode: "trash" | "delete";
+      apps: AppInfo[];
+      targets: BatchTarget[];
+      leftoverCount: number | null;
+      leftoverBytes: number;
+      preparing: boolean;
+    }
+  | { kind: "batch-report"; results: BatchResult[] };
 
 export default function App() {
   const [apps, setApps] = useState<AppInfo[]>([]);
@@ -50,12 +64,14 @@ export default function App() {
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
+  const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
 
   const searchRef = useRef<HTMLInputElement>(null);
   const scanSeq = useRef(0);
   const skillSeq = useRef(0);
   const leftoverSeq = useRef(0);
   const updateSeq = useRef(0);
+  const batchSeq = useRef(0);
   const booted = useRef(false);
 
   const checkUpdatesFor = useCallback(async (list: AppInfo[]) => {
@@ -137,6 +153,12 @@ export default function App() {
       setApps(list);
       setSizes({});
       setIcons({});
+      setBatchSelected((prev) => {
+        if (prev.size === 0) return prev;
+        const alive = new Set(list.map((a) => a.path));
+        const next = new Set([...prev].filter((p) => alive.has(p)));
+        return next.size === prev.size ? prev : next;
+      });
       setLoading(false);
       void hydrate(list, seq);
       void checkUpdatesFor(list);
@@ -162,6 +184,7 @@ export default function App() {
       setSelected(null);
       setLeftovers(null);
       setSelectedSkill(null);
+      setBatchSelected(new Set());
     },
     [view],
   );
@@ -192,12 +215,14 @@ export default function App() {
         } else if (selected) {
           setSelected(null);
           setLeftovers(null);
+        } else if (batchSelected.size > 0) {
+          setBatchSelected(new Set());
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rescan, dialog, busy, selected, selectedSkill]);
+  }, [rescan, dialog, busy, selected, selectedSkill, batchSelected.size]);
 
   const selectApp = useCallback(async (app: AppInfo) => {
     setSelected(app);
@@ -239,6 +264,101 @@ export default function App() {
     setUnchecked(checked ? new Set() : new Set((leftovers ?? []).map((i) => i.path)));
   };
 
+  const toggleBatch = (path: string) => {
+    setBatchSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setBatchSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const app of visibleSelectable) next.delete(app.path);
+      } else {
+        for (const app of visibleSelectable) next.add(app.path);
+      }
+      return next;
+    });
+  };
+
+  const openBatchConfirm = async (mode: "trash" | "delete") => {
+    if (batchApps.length === 0) return;
+    const seq = ++batchSeq.current;
+    setAcknowledged(false);
+    setDialog({
+      kind: "batch-confirm",
+      mode,
+      apps: batchApps,
+      targets: batchApps.map((a) => ({
+        appPath: a.path,
+        bundleId: a.bundleId,
+        extraPaths: [],
+      })),
+      leftoverCount: null,
+      leftoverBytes: 0,
+      preparing: true,
+    });
+
+    const queue = [...batchApps];
+    const collected: Record<string, LeftoverItem[]> = {};
+    const worker = async () => {
+      for (;;) {
+        const app = queue.shift();
+        if (!app || seq !== batchSeq.current) return;
+        try {
+          collected[app.path] = await api.findLeftovers(app.path, app.bundleId, [app.name]);
+        } catch {
+          collected[app.path] = [];
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+    if (seq !== batchSeq.current) return;
+
+    let count = 0;
+    let bytes = 0;
+    for (const items of Object.values(collected)) {
+      count += items.length;
+      bytes += items.reduce((sum, item) => sum + item.size, 0);
+    }
+    setDialog((prev) =>
+      prev?.kind === "batch-confirm"
+        ? {
+            ...prev,
+            preparing: false,
+            leftoverCount: count,
+            leftoverBytes: bytes,
+            targets: prev.apps.map((app) => ({
+              appPath: app.path,
+              bundleId: app.bundleId,
+              extraPaths: (collected[app.path] ?? []).map((item) => item.path),
+            })),
+          }
+        : prev,
+    );
+  };
+
+  const confirmBatch = async (state: Extract<Dialog, { kind: "batch-confirm" }>) => {
+    setBusy(true);
+    try {
+      const results = await api.uninstallMany(state.targets, state.mode);
+      setBatchSelected(new Set());
+      setDialog({ kind: "batch-report", results });
+      void scan();
+    } catch (err) {
+      setDialog({ kind: "error", message: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const checkedLeftovers = (leftovers ?? []).filter((i) => !unchecked.has(i.path));
   const checkedLeftoverBytes = checkedLeftovers.reduce((sum, i) => sum + i.size, 0);
 
@@ -276,6 +396,23 @@ export default function App() {
     [sizes],
   );
   const sizesReady = apps.length > 0 && Object.keys(sizes).length >= apps.length;
+
+  const batchApps = useMemo(
+    () => apps.filter((a) => batchSelected.has(a.path) && !a.isSystem),
+    [apps, batchSelected],
+  );
+  const batchBytes = useMemo(
+    () => batchApps.reduce((sum, a) => sum + (sizes[a.path] ?? 0), 0),
+    [batchApps, sizes],
+  );
+  const batchSizesReady = batchApps.every((a) => sizes[a.path] != null);
+  const visibleSelectable = useMemo(
+    () => visibleApps.filter((a) => !a.isSystem),
+    [visibleApps],
+  );
+  const allVisibleSelected =
+    visibleSelectable.length > 0 &&
+    visibleSelectable.every((a) => batchSelected.has(a.path));
 
   const visibleSkills = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -426,6 +563,37 @@ export default function App() {
           <span />
         </div>
 
+        {view === "apps" && batchApps.length > 0 && (
+          <div className="batch-bar">
+            <span className="batch-bar-text">
+              已选 <b>{batchApps.length}</b> 个 App
+            </span>
+            <span className="batch-bar-bytes">
+              {batchSizesReady ? `共 ${formatBytes(batchBytes)}` : "计算大小中…"}
+            </span>
+            <div className="batch-bar-actions">
+              <button className="link" onClick={toggleSelectAllVisible}>
+                {allVisibleSelected ? "取消全选" : "全选当前"}
+              </button>
+              <button className="link" onClick={() => setBatchSelected(new Set())}>
+                清除选择
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => void openBatchConfirm("trash")}
+              >
+                移到废纸篓
+              </button>
+              <button
+                className="btn btn-sm btn-danger-outline"
+                onClick={() => void openBatchConfirm("delete")}
+              >
+                永久删除
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="list">
           {view === "skills" ? (
             <>
@@ -485,7 +653,9 @@ export default function App() {
                     size={sizes[app.path]}
                     update={updates[app.path]}
                     selected={selected?.path === app.path}
+                    checked={batchSelected.has(app.path)}
                     onSelect={() => void selectApp(app)}
+                    onToggle={() => toggleBatch(app.path)}
                   />
                 ))}
 
@@ -552,6 +722,29 @@ export default function App() {
           appName={dialog.appName}
           onClose={closeDialog}
         />
+      )}
+
+      {dialog?.kind === "batch-confirm" && (
+        <BatchConfirmDialog
+          mode={dialog.mode}
+          apps={dialog.apps}
+          leftoverCount={dialog.preparing ? null : dialog.leftoverCount}
+          totalBytes={
+            dialog.preparing || !dialog.apps.every((a) => sizes[a.path] != null)
+              ? null
+              : dialog.apps.reduce((sum, a) => sum + (sizes[a.path] ?? 0), 0) +
+                dialog.leftoverBytes
+          }
+          busy={busy}
+          acknowledged={acknowledged}
+          onAcknowledged={setAcknowledged}
+          onCancel={closeDialog}
+          onConfirm={() => void confirmBatch(dialog)}
+        />
+      )}
+
+      {dialog?.kind === "batch-report" && (
+        <BatchReportDialog results={dialog.results} onClose={closeDialog} />
       )}
 
       {dialog?.kind === "notice" && (

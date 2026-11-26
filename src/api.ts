@@ -26,6 +26,19 @@ export interface UninstallReport {
   quitAttempted: boolean;
 }
 
+export interface BatchTarget {
+  appPath: string;
+  bundleId: string;
+  extraPaths: string[];
+}
+
+export interface BatchResult {
+  appPath: string;
+  appName: string;
+  report: UninstallReport | null;
+  error: string | null;
+}
+
 export type UpdateChannel = "appstore" | "homebrew" | "sparkle" | "self";
 
 export interface UpdateInfo {
@@ -70,6 +83,8 @@ export const api = {
     extraPaths: string[];
     mode: "trash" | "delete";
   }) => invoke<UninstallReport>("uninstall", args),
+  uninstallMany: (targets: BatchTarget[], mode: "trash" | "delete") =>
+    invoke<BatchResult[]>("uninstall_many", { targets, mode }),
   checkUpdates: (apps: { path: string; bundleId: string; version: string }[]) =>
     invoke<UpdateInfo[]>("check_updates", { apps }),
   performUpdate: (appPath: string, channel: UpdateChannel, target: string) =>
