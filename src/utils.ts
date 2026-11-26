@@ -17,6 +17,20 @@ export function tildify(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~");
 }
 
+export function formatDateTime(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return "—";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return `今天 ${clock}`;
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return `昨天 ${clock}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}`;
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const date = new Date(iso);

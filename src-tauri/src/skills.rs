@@ -79,10 +79,26 @@ pub async fn scan_skills() -> Result<Vec<SkillInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn update_skill(name: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || update_impl(&name))
+pub async fn update_skill(app: tauri::AppHandle, name: String) -> Result<String, String> {
+    let title = name.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || update_impl(&name))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+    let mut entry = crate::history::HistoryEntry::new("skill-update", title.clone());
+    match &result {
+        Ok(message) => entry
+            .items
+            .push(crate::history::HistoryEntry::item(&title, "", true, Some(message.clone()))),
+        Err(err) => {
+            entry.failed = 1;
+            entry
+                .items
+                .push(crate::history::HistoryEntry::item(&title, "", false, Some(err.clone())));
+        }
+    }
+    crate::history::record(&app, entry);
+    result
 }
 
 fn scan_impl() -> Result<Vec<SkillInfo>, String> {

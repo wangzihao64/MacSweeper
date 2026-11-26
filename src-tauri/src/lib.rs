@@ -1,3 +1,4 @@
+mod history;
 mod icons;
 mod leftovers;
 mod scanner;
@@ -19,6 +20,8 @@ pub fn run() {
             updates::perform_update,
             skills::scan_skills,
             skills::update_skill,
+            history::list_history,
+            history::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MacSweeper");

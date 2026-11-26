@@ -603,6 +603,53 @@ button {
   opacity: 0.75;
 }
 
+.history-icon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.history-icon-lg {
+  width: 62px;
+  height: 62px;
+  border-radius: 15px;
+  font-size: 24px;
+}
+
+.history-sub {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-time {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge-danger {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.toolbar-link {
+  flex: none;
+}
+
 .row-size {
   flex: none;
   min-width: 70px;
@@ -1073,6 +1120,73 @@ input[type="checkbox"]:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.hist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 7px;
+}
+
+.hist-item:hover {
+  background: var(--hover);
+}
+
+.hist-mark {
+  flex: none;
+  width: 15px;
+  text-align: center;
+  margin-top: 1px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #34a853;
+}
+
+.hist-item-failed .hist-mark {
+  color: var(--danger);
+}
+
+.hist-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hist-name {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hist-path {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  word-break: break-all;
+  user-select: text;
+}
+
+.hist-msg {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.hist-item-failed .hist-msg {
+  color: var(--danger);
+}
+
+.stat b.stat-danger {
+  color: var(--danger);
 }
 
 .notice {

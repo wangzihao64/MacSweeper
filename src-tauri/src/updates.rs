@@ -36,13 +36,41 @@ pub async fn check_updates(apps: Vec<UpdateCandidate>) -> Vec<UpdateInfo> {
 
 #[tauri::command]
 pub async fn perform_update(
+    app: tauri::AppHandle,
     app_path: String,
     channel: String,
     target: String,
 ) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || perform_impl(&app_path, &channel, &target))
-        .await
-        .map_err(|e| format!("更新任务异常：{e}"))?
+    let title = Path::new(&app_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&app_path)
+        .to_string();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || perform_impl(&app_path, &channel, &target))
+            .await
+            .map_err(|e| format!("更新任务异常：{e}"))?;
+
+    let mut entry = crate::history::HistoryEntry::new("app-update", title.clone());
+    match &result {
+        Ok(message) => entry.items.push(crate::history::HistoryEntry::item(
+            &title,
+            "",
+            true,
+            Some(message.clone()),
+        )),
+        Err(err) => {
+            entry.failed = 1;
+            entry.items.push(crate::history::HistoryEntry::item(
+                &title,
+                "",
+                false,
+                Some(err.clone()),
+            ));
+        }
+    }
+    crate::history::record(&app, entry);
+    result
 }
 
 #[derive(Debug, Clone)]

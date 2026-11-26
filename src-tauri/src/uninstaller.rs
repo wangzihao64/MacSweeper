@@ -16,20 +16,27 @@ pub struct UninstallReport {
     pub removed: Vec<String>,
     pub failed: Vec<FailedItem>,
     pub quit_attempted: bool,
+    pub freed_bytes: u64,
 }
 
 #[tauri::command]
 pub async fn uninstall(
+    app: tauri::AppHandle,
     app_path: String,
     bundle_id: String,
     extra_paths: Vec<String>,
     mode: String,
 ) -> Result<UninstallReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let app_name = app_display_name(&app_path);
+    let record_mode = mode.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || {
         uninstall_impl(app_path, bundle_id, extra_paths, mode)
     })
     .await
-    .map_err(|e| format!("卸载任务异常：{e}"))?
+    .map_err(|e| format!("卸载任务异常：{e}"))??;
+
+    record_uninstall(&app, &app_name, &record_mode, &report);
+    Ok(report)
 }
 
 #[derive(Deserialize)]
@@ -52,12 +59,17 @@ pub struct BatchResult {
 
 #[tauri::command]
 pub async fn uninstall_many(
+    app: tauri::AppHandle,
     targets: Vec<BatchTarget>,
     mode: String,
 ) -> Result<Vec<BatchResult>, String> {
-    tauri::async_runtime::spawn_blocking(move || batch_impl(targets, mode))
+    let record_mode = mode.clone();
+    let results = tauri::async_runtime::spawn_blocking(move || batch_impl(targets, mode))
         .await
-        .map_err(|e| format!("批量卸载任务异常：{e}"))
+        .map_err(|e| format!("批量卸载任务异常：{e}"))?;
+
+    record_batch(&app, &record_mode, &results);
+    Ok(results)
 }
 
 fn batch_impl(targets: Vec<BatchTarget>, mode: String) -> Vec<BatchResult> {
@@ -157,9 +169,14 @@ fn uninstall_impl(
         }
     }
 
+    let mut freed_bytes: u64 = 0;
     for target in &targets {
+        let size = crate::scanner::dir_size(target);
         match delete_path(target, permanent) {
-            Ok(()) => removed.push(target.to_string_lossy().to_string()),
+            Ok(()) => {
+                freed_bytes = freed_bytes.saturating_add(size);
+                removed.push(target.to_string_lossy().to_string());
+            }
             Err(err) => failed.push(FailedItem {
                 path: target.to_string_lossy().to_string(),
                 error: friendly_error(&err),
@@ -171,7 +188,106 @@ fn uninstall_impl(
         removed,
         failed,
         quit_attempted,
+        freed_bytes,
     })
+}
+
+fn app_display_name(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn file_name_of(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn record_uninstall(
+    app: &tauri::AppHandle,
+    app_name: &str,
+    mode: &str,
+    report: &UninstallReport,
+) {
+    use crate::history::{HistoryEntry, HistoryItem};
+
+    let mut entry = HistoryEntry::new("uninstall", app_name);
+    entry.mode = Some(mode.to_string());
+    entry.freed_bytes = report.freed_bytes;
+    entry.removed = report.removed.len();
+    entry.failed = report.failed.len();
+    entry.items = report
+        .removed
+        .iter()
+        .map(|path| HistoryItem {
+            name: file_name_of(path),
+            path: path.clone(),
+            ok: true,
+            message: None,
+        })
+        .chain(report.failed.iter().map(|fail| HistoryItem {
+            name: file_name_of(&fail.path),
+            path: fail.path.clone(),
+            ok: false,
+            message: Some(fail.error.clone()),
+        }))
+        .collect();
+    crate::history::record(app, entry);
+}
+
+fn record_batch(app: &tauri::AppHandle, mode: &str, results: &[BatchResult]) {
+    use crate::history::{HistoryEntry, HistoryItem};
+
+    let mut entry = HistoryEntry::new("batch-uninstall", format!("批量卸载 {} 个 App", results.len()));
+    entry.mode = Some(mode.to_string());
+    entry.freed_bytes = results
+        .iter()
+        .filter_map(|r| r.report.as_ref())
+        .map(|r| r.freed_bytes)
+        .sum();
+    entry.removed = results
+        .iter()
+        .filter_map(|r| r.report.as_ref())
+        .map(|r| r.removed.len())
+        .sum();
+
+    let mut failed = 0;
+    entry.items = results
+        .iter()
+        .map(|result| match &result.report {
+            Some(report) if report.failed.is_empty() => HistoryItem {
+                name: result.app_name.clone(),
+                path: result.app_path.clone(),
+                ok: true,
+                message: None,
+            },
+            Some(report) => {
+                failed += report.failed.len();
+                HistoryItem {
+                    name: result.app_name.clone(),
+                    path: result.app_path.clone(),
+                    ok: true,
+                    message: Some(format!("{} 项关联文件未能删除", report.failed.len())),
+                }
+            }
+            None => {
+                failed += 1;
+                HistoryItem {
+                    name: result.app_name.clone(),
+                    path: result.app_path.clone(),
+                    ok: false,
+                    message: result.error.clone(),
+                }
+            }
+        })
+        .collect();
+    entry.failed = failed;
+    crate::history::record(app, entry);
 }
 
 fn resolve_under_library(raw: &str, library_canon: &Path) -> Result<PathBuf, String> {
@@ -388,6 +504,32 @@ mod tests {
         assert!(is_valid_bundle_id("com.example.app"));
         assert!(!is_valid_bundle_id("com.example.\"app\""));
         assert!(!is_valid_bundle_id(""));
+    }
+
+    #[test]
+    fn reports_freed_bytes_for_deleted_app() {
+        let app_path = std::env::temp_dir().join(format!(
+            "macsweeper-unin-{}-{}.app",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(app_path.join("Contents")).unwrap();
+        std::fs::write(app_path.join("Contents").join("blob.bin"), vec![0u8; 4096]).unwrap();
+
+        let report = uninstall_impl(
+            app_path.to_string_lossy().to_string(),
+            String::new(),
+            vec![],
+            "delete".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(report.removed.len(), 1);
+        assert!(report.freed_bytes >= 4096);
+        assert!(!app_path.exists());
     }
 
     #[test]

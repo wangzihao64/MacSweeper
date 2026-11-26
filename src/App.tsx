@@ -4,6 +4,7 @@ import {
   type AppInfo,
   type BatchResult,
   type BatchTarget,
+  type HistoryEntry,
   type LeftoverItem,
   type SkillInfo,
   type UninstallReport,
@@ -15,6 +16,8 @@ import AppRow from "./components/AppRow";
 import DetailPanel from "./components/DetailPanel";
 import SkillRow from "./components/SkillRow";
 import SkillPanel from "./components/SkillPanel";
+import HistoryRow, { KIND_LABEL } from "./components/HistoryRow";
+import HistoryPanel from "./components/HistoryPanel";
 import {
   BatchConfirmDialog,
   BatchReportDialog,
@@ -22,6 +25,7 @@ import {
   ErrorDialog,
   NoticeDialog,
   ReportDialog,
+  SimpleConfirmDialog,
 } from "./components/Dialogs";
 
 type Dialog =
@@ -38,7 +42,8 @@ type Dialog =
       leftoverBytes: number;
       preparing: boolean;
     }
-  | { kind: "batch-report"; results: BatchResult[] };
+  | { kind: "batch-report"; results: BatchResult[] }
+  | { kind: "clear-history" };
 
 export default function App() {
   const [apps, setApps] = useState<AppInfo[]>([]);
@@ -65,6 +70,9 @@ export default function App() {
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
   const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [selectedHistory, setSelectedHistory] = useState<HistoryEntry | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
   const scanSeq = useRef(0);
@@ -72,6 +80,7 @@ export default function App() {
   const leftoverSeq = useRef(0);
   const updateSeq = useRef(0);
   const batchSeq = useRef(0);
+  const historySeq = useRef(0);
   const booted = useRef(false);
 
   const checkUpdatesFor = useCallback(async (list: AppInfo[]) => {
@@ -140,6 +149,24 @@ export default function App() {
     }
   }, []);
 
+  const loadHistory = useCallback(async () => {
+    const seq = ++historySeq.current;
+    setHistoryLoading(true);
+    try {
+      const list = await api.listHistory();
+      if (seq !== historySeq.current) return;
+      setHistory(list);
+      setSelectedHistory((prev) =>
+        prev ? list.find((e) => e.id === prev.id) ?? null : null,
+      );
+    } catch {
+      if (seq !== historySeq.current) return;
+      setHistory([]);
+    } finally {
+      if (seq === historySeq.current) setHistoryLoading(false);
+    }
+  }, []);
+
   const scan = useCallback(async () => {
     const seq = ++scanSeq.current;
     setLoading(true);
@@ -174,7 +201,8 @@ export default function App() {
     booted.current = true;
     void scan();
     void loadSkills();
-  }, [scan, loadSkills]);
+    void loadHistory();
+  }, [scan, loadSkills, loadHistory]);
 
   const changeView = useCallback(
     (next: View) => {
@@ -184,18 +212,22 @@ export default function App() {
       setSelected(null);
       setLeftovers(null);
       setSelectedSkill(null);
+      setSelectedHistory(null);
       setBatchSelected(new Set());
+      if (next === "history") void loadHistory();
     },
-    [view],
+    [view, loadHistory],
   );
 
   const rescan = useCallback(() => {
     if (view === "skills") {
       void loadSkills();
+    } else if (view === "history") {
+      void loadHistory();
     } else {
       void scan();
     }
-  }, [view, loadSkills, scan]);
+  }, [view, loadSkills, loadHistory, scan]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -212,6 +244,8 @@ export default function App() {
           if (!busy) setDialog(null);
         } else if (selectedSkill) {
           setSelectedSkill(null);
+        } else if (selectedHistory) {
+          setSelectedHistory(null);
         } else if (selected) {
           setSelected(null);
           setLeftovers(null);
@@ -222,7 +256,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rescan, dialog, busy, selected, selectedSkill, batchSelected.size]);
+  }, [rescan, dialog, busy, selected, selectedSkill, selectedHistory, batchSelected.size]);
 
   const selectApp = useCallback(async (app: AppInfo) => {
     setSelected(app);
@@ -352,6 +386,7 @@ export default function App() {
       setBatchSelected(new Set());
       setDialog({ kind: "batch-report", results });
       void scan();
+      void loadHistory();
     } catch (err) {
       setDialog({ kind: "error", message: String(err) });
     } finally {
@@ -430,6 +465,41 @@ export default function App() {
     [skills],
   );
 
+  const visibleHistory = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return history;
+    return history.filter(
+      (entry) =>
+        entry.title.toLowerCase().includes(q) ||
+        (KIND_LABEL[entry.kind] ?? "").toLowerCase().includes(q) ||
+        entry.items.some(
+          (item) =>
+            item.name.toLowerCase().includes(q) ||
+            item.path.toLowerCase().includes(q) ||
+            (item.message ?? "").toLowerCase().includes(q),
+        ),
+    );
+  }, [history, query]);
+
+  const historyFreed = useMemo(
+    () => visibleHistory.reduce((sum, entry) => sum + entry.freedBytes, 0),
+    [visibleHistory],
+  );
+
+  const clearHistory = async () => {
+    setBusy(true);
+    try {
+      await api.clearHistory();
+      setHistory([]);
+      setSelectedHistory(null);
+      setDialog(null);
+    } catch (err) {
+      setDialog({ kind: "error", message: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const closeDialog = () => {
     if (busy) return;
     setDialog(null);
@@ -451,6 +521,7 @@ export default function App() {
       setSelected(null);
       setLeftovers(null);
       void scan();
+      void loadHistory();
     } catch (err) {
       setDialog({ kind: "error", message: String(err) });
     } finally {
@@ -474,6 +545,7 @@ export default function App() {
       setDialog({ kind: "error", message: String(err) });
     } finally {
       setUpdatingPath(null);
+      void loadHistory();
     }
   };
 
@@ -488,6 +560,7 @@ export default function App() {
       setDialog({ kind: "error", message: String(err) });
     } finally {
       setUpdatingSkill(null);
+      void loadHistory();
     }
   };
 
@@ -501,7 +574,10 @@ export default function App() {
         counts={counts}
         updateCount={updateCount}
         skillCount={skills.length}
-        scanning={view === "skills" ? skillsLoading : loading}
+        historyCount={history.length}
+        scanning={
+          view === "skills" ? skillsLoading : view === "history" ? historyLoading : loading
+        }
         onRescan={rescan}
       />
 
@@ -526,7 +602,9 @@ export default function App() {
               placeholder={
                 view === "skills"
                   ? "搜索 Skill 名称、描述或来源"
-                  : "搜索 App 名称或 Bundle ID"
+                  : view === "history"
+                    ? "搜索历史标题、App 或路径"
+                    : "搜索 App 名称或 Bundle ID"
               }
               spellCheck={false}
               autoComplete="off"
@@ -537,8 +615,20 @@ export default function App() {
               </button>
             )}
           </div>
+          {view === "history" && history.length > 0 && (
+            <button
+              className="link toolbar-link"
+              onClick={() => setDialog({ kind: "clear-history" })}
+            >
+              清空历史
+            </button>
+          )}
           <div className="toolbar-meta">
-            {view === "skills"
+            {view === "history"
+              ? historyLoading
+                ? "正在读取记录…"
+                : `${visibleHistory.length} 条记录 · 共释放 ${formatBytes(historyFreed)}`
+              : view === "skills"
               ? skillsLoading
                 ? "正在扫描技能…"
                 : `${visibleSkills.length} 个 Skill · ${managedSkillCount} 个可自动更新`
@@ -558,7 +648,9 @@ export default function App() {
 
         <div
           className="progress"
-          hidden={view === "skills" ? !skillsLoading : !loading}
+          hidden={
+            view === "skills" ? !skillsLoading : view === "history" ? !historyLoading : !loading
+          }
         >
           <span />
         </div>
@@ -595,7 +687,35 @@ export default function App() {
         )}
 
         <div className="list">
-          {view === "skills" ? (
+          {view === "history" ? (
+            <>
+              {historyLoading && history.length === 0 && <SkeletonRows />}
+
+              {!historyLoading &&
+                visibleHistory.map((entry) => (
+                  <HistoryRow
+                    key={entry.id}
+                    entry={entry}
+                    selected={selectedHistory?.id === entry.id}
+                    onSelect={() => setSelectedHistory(entry)}
+                  />
+                ))}
+
+              {!historyLoading && history.length === 0 && (
+                <div className="state-block">
+                  <p>还没有操作记录</p>
+                  <span>卸载 App、更新 Skill 或应用后，会在这里留下记录</span>
+                </div>
+              )}
+
+              {!historyLoading && history.length > 0 && visibleHistory.length === 0 && (
+                <div className="state-block">
+                  <p>没有找到匹配的记录</p>
+                  <span>换个关键词试试</span>
+                </div>
+              )}
+            </>
+          ) : view === "skills" ? (
             <>
               {skillsLoading && skills.length === 0 && <SkeletonRows />}
 
@@ -670,7 +790,9 @@ export default function App() {
         </div>
       </main>
 
-      {view === "skills" ? (
+      {view === "history" ? (
+        <HistoryPanel entry={selectedHistory} onClose={() => setSelectedHistory(null)} />
+      ) : view === "skills" ? (
         <SkillPanel
           skill={selectedSkill}
           updating={updatingSkill === selectedSkill?.name}
@@ -745,6 +867,18 @@ export default function App() {
 
       {dialog?.kind === "batch-report" && (
         <BatchReportDialog results={dialog.results} onClose={closeDialog} />
+      )}
+
+      {dialog?.kind === "clear-history" && (
+        <SimpleConfirmDialog
+          title="清空操作历史？"
+          message={`将删除本机保存的 ${history.length} 条历史记录，已完成的卸载或更新不会受影响。`}
+          confirmText="清空历史"
+          danger
+          busy={busy}
+          onCancel={closeDialog}
+          onConfirm={() => void clearHistory()}
+        />
       )}
 
       {dialog?.kind === "notice" && (

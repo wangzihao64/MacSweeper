@@ -180,6 +180,45 @@ export function ErrorDialog({ message, onClose }: ErrorDialogProps) {
   );
 }
 
+interface SimpleConfirmDialogProps {
+  title: string;
+  message: string;
+  confirmText: string;
+  danger?: boolean;
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+export function SimpleConfirmDialog({
+  title,
+  message,
+  confirmText,
+  danger = false,
+  busy = false,
+  onCancel,
+  onConfirm,
+}: SimpleConfirmDialogProps) {
+  return (
+    <Modal onClose={onCancel} dismissable={!busy}>
+      <h2>{title}</h2>
+      <p className="modal-lede">{message}</p>
+      <footer className="modal-actions">
+        <button className="btn" onClick={onCancel} disabled={busy}>
+          取消
+        </button>
+        <button
+          className={`btn ${danger ? "btn-danger-solid" : "btn-primary"}`}
+          onClick={onConfirm}
+          disabled={busy}
+        >
+          {confirmText}
+        </button>
+      </footer>
+    </Modal>
+  );
+}
+
 interface BatchConfirmDialogProps {
   mode: "trash" | "delete";
   apps: AppInfo[];

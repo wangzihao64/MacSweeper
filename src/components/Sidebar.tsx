@@ -1,7 +1,7 @@
 import appIconUrl from "../assets/app-icon.png";
 
 export type Filter = "all" | "update" | "user" | "system";
-export type View = "apps" | "skills";
+export type View = "apps" | "skills" | "history";
 
 interface SidebarProps {
   view: View;
@@ -11,6 +11,7 @@ interface SidebarProps {
   counts: { all: number; user: number; system: number };
   updateCount: number;
   skillCount: number;
+  historyCount: number;
   scanning: boolean;
   onRescan: () => void;
 }
@@ -30,6 +31,7 @@ export default function Sidebar({
   counts,
   updateCount,
   skillCount,
+  historyCount,
   scanning,
   onRescan,
 }: SidebarProps) {
@@ -72,6 +74,15 @@ export default function Sidebar({
           <span>已安装 Skill</span>
           <span className="nav-count">{skillCount}</span>
         </button>
+
+        <div className="nav-label nav-label-gap">记录</div>
+        <button
+          className={`nav-item ${view === "history" ? "active" : ""}`}
+          onClick={() => onView("history")}
+        >
+          <span>操作历史</span>
+          <span className="nav-count">{historyCount}</span>
+        </button>
       </nav>
 
       <div className="sidebar-footer">
@@ -80,12 +91,22 @@ export default function Sidebar({
             ? scanning
               ? "正在扫描技能…"
               : `已发现 ${skillCount} 个 Skill`
-            : scanning
-              ? "正在扫描应用…"
-              : `已索引 ${counts.all} 个 App，可卸载 ${counts.user} 个`}
+            : view === "history"
+              ? scanning
+                ? "正在读取记录…"
+                : `共 ${historyCount} 条操作记录`
+              : scanning
+                ? "正在扫描应用…"
+                : `已索引 ${counts.all} 个 App，可卸载 ${counts.user} 个`}
         </div>
         <button className="btn btn-block" onClick={onRescan} disabled={scanning}>
-          {scanning ? "扫描中…" : view === "skills" ? "刷新技能" : "重新扫描"}
+          {scanning
+            ? "处理中…"
+            : view === "skills"
+              ? "刷新技能"
+              : view === "history"
+                ? "刷新记录"
+                : "重新扫描"}
         </button>
       </div>
     </aside>

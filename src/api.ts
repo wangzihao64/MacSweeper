@@ -24,6 +24,7 @@ export interface UninstallReport {
   removed: string[];
   failed: FailedItem[];
   quitAttempted: boolean;
+  freedBytes: number;
 }
 
 export interface BatchTarget {
@@ -70,6 +71,31 @@ export interface SkillInfo {
   managed: boolean;
 }
 
+export type HistoryKind =
+  | "uninstall"
+  | "batch-uninstall"
+  | "skill-update"
+  | "app-update";
+
+export interface HistoryItem {
+  name: string;
+  path: string;
+  ok: boolean;
+  message: string | null;
+}
+
+export interface HistoryEntry {
+  id: string;
+  timestamp: number;
+  kind: HistoryKind;
+  title: string;
+  mode: "trash" | "delete" | null;
+  freedBytes: number;
+  removed: number;
+  failed: number;
+  items: HistoryItem[];
+}
+
 export const api = {
   scanApps: () => invoke<AppInfo[]>("scan_apps"),
   appSizes: (paths: string[]) =>
@@ -91,4 +117,6 @@ export const api = {
     invoke<string>("perform_update", { appPath, channel, target }),
   scanSkills: () => invoke<SkillInfo[]>("scan_skills"),
   updateSkill: (name: string) => invoke<string>("update_skill", { name }),
+  listHistory: () => invoke<HistoryEntry[]>("list_history"),
+  clearHistory: () => invoke<void>("clear_history"),
 };
